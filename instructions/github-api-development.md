@@ -10,6 +10,8 @@ You are developing code to interact with the GitHub API for various automation, 
 - **Type Safety:** Use TypeScript interfaces for API responses when possible
 - **Schema Discovery:** Always use introspection (GraphQL) or documentation (REST) instead of guessing field names
 - **Dynamic Data:** Never hardcode issue numbers, repository names, or field values - always fetch from the API
+- **Code Reuse:** Reuse existing functionality and store fetched data instead of redundant API calls
+- **Safety First:** Prioritize safety when testing against production data
 
 ### API Selection Guidelines
 
@@ -32,12 +34,12 @@ You are developing code to interact with the GitHub API for various automation, 
 
 #### Important Note: Both APIs Are Active
 - **REST API**: Fully supported, versioned (v2022-11-28), actively maintained
-- **GraphQL API**: Modern alternative with different strengths
+- **GraphQL API**: Fully supported, actively maintained
 - **Choose based on use case**, not deprecation status
 
 ### Project Management (ProjectsV2) Specifics
 
-#### Key Learnings from This Session
+#### Key Learnings
 - **Project Items Query:** Use `node(id: $projectId)` with `... on ProjectV2` for project queries
 - **Field Values:** Access via `fieldValues` with proper union type handling
 - **Content Types:** Always check `content.__typename` before processing items
@@ -139,7 +141,7 @@ while (hasNextPage) {
 }
 ```
 
-### Error Handling Patterns
+### Error Handling and Rate Limiting
 
 #### Rate Limiting
 ```typescript
@@ -215,52 +217,6 @@ for (const item of items) {
 }
 ```
 
-### Debugging and Troubleshooting
-
-#### Common Issues and Solutions
-1. **"Field doesn't accept argument 'query'"** - ProjectsV2 items don't support text search
-2. **"Item type: undefined"** - Check content.__typename before processing
-3. **"No field values found"** - Verify fieldValues.nodes exists and has content
-4. **"Rate limit exceeded"** - Implement exponential backoff and retry logic
-5. **"Field not found"** - Use introspection to discover correct field names
-6. **"Union type error"** - Check all possible types in union via introspection
-7. **"Unexpected field value"** - Validate field types against introspection results
-8. **"Hardcoded values"** - Always fetch identifiers from API, never hardcode issue numbers or repository names
-
-#### Debug Logging
-```typescript
-// Add debug logging for field extraction
-console.log(`DEBUG: Processing issue #${item.content.number} with ${item.fieldValues.nodes.length} field values`);
-console.log(`DEBUG: Raw field value:`, JSON.stringify(fv, null, 2));
-console.log(`DEBUG: Field value type: ${fv.__typename}`);
-console.log(`DEBUG: Field name: ${fv?.field?.name}`);
-
-// Log introspection results for troubleshooting
-console.log(`DEBUG: Available field types:`, availableFieldTypes);
-console.log(`DEBUG: Expected field structure:`, expectedFieldStructure);
-```
-
-### Performance Considerations
-
-#### Optimization Strategies
-- **Batch Processing:** Process items in chunks to avoid memory issues
-- **Field Selection:** Only request needed fields in GraphQL queries
-- **Caching:** Cache project IDs and field configurations
-- **Parallel Processing:** Use Promise.all for independent operations
-- **Early Termination:** Stop processing when target items are found
-
-#### Memory Management
-```typescript
-// Process items in batches
-const batchSize = 100;
-const results: any[] = [];
-
-for (let i = 0; i < items.length; i += batchSize) {
-  const batch = items.slice(i, i + batchSize);
-  // Process batch...
-}
-```
-
 ### Schema Discovery and Validation
 
 #### CRITICAL: Never Guess Field Names or Hardcode Values
@@ -314,24 +270,7 @@ query IntrospectSingleSelectField {
     }
   }
 }
-
-# Get schema overview
-query IntrospectSchema {
-  __schema {
-    types {
-      name
-      description
-      kind
-    }
-  }
-}
 ```
-
-#### REST API Documentation
-- **Always check the official REST API docs** for field names
-- **Use the OpenAPI specification** for programmatic discovery
-- **Test with small requests** to verify field names
-- **Handle optional fields** that may not always be present
 
 #### Validation Process
 1. **GraphQL**: Run introspection queries first
@@ -341,18 +280,52 @@ query IntrospectSchema {
 5. **Document**: Record discovered field names for your use case
 6. **Dynamic**: Ensure all identifiers are fetched from API, not hardcoded
 
-### Security Considerations
+### Debugging and Troubleshooting
 
-#### Authentication
-- **Token Management:** Store tokens securely, rotate regularly
-- **Scope Limitation:** Use minimal required permissions
-- **Environment Variables:** Never hardcode tokens in code
-- **Audit Logging:** Log API usage for security monitoring
+#### Common Issues and Solutions
+1. **"Field doesn't accept argument 'query'"** - ProjectsV2 items don't support text search
+2. **"Item type: undefined"** - Check content.__typename before processing
+3. **"No field values found"** - Verify fieldValues.nodes exists and has content
+4. **"Rate limit exceeded"** - Implement exponential backoff and retry logic
+5. **"Field not found"** - Use introspection to discover correct field names
+6. **"Union type error"** - Check all possible types in union via introspection
+7. **"Unexpected field value"** - Validate field types against introspection results
+8. **"Hardcoded values"** - Always fetch identifiers from API, never hardcode issue numbers or repository names
 
-#### Data Handling
-- **Input Validation:** Validate all user inputs
-- **Output Sanitization:** Sanitize data before display
-- **Error Messages:** Don't expose sensitive information in errors
+#### Debug Logging
+```typescript
+// Add debug logging for field extraction
+console.log(`DEBUG: Processing issue #${item.content.number} with ${item.fieldValues.nodes.length} field values`);
+console.log(`DEBUG: Raw field value:`, JSON.stringify(fv, null, 2));
+console.log(`DEBUG: Field value type: ${fv.__typename}`);
+console.log(`DEBUG: Field name: ${fv?.field?.name}`);
+
+// Log introspection results for troubleshooting
+console.log(`DEBUG: Available field types:`, availableFieldTypes);
+console.log(`DEBUG: Expected field structure:`, expectedFieldStructure);
+```
+
+### Performance and Optimization
+
+#### Optimization Strategies
+- **Batch Processing:** Process items in chunks to avoid memory issues
+- **Field Selection:** Only request needed fields in GraphQL queries
+- **Caching:** Cache project IDs and field configurations
+- **Parallel Processing:** Use Promise.all for independent operations
+- **Early Termination:** Stop processing when target items are found
+- **Data Reuse:** Store fetched data instead of redundant API calls
+
+#### Memory Management
+```typescript
+// Process items in batches
+const batchSize = 100;
+const results: any[] = [];
+
+for (let i = 0; i < items.length; i += batchSize) {
+  const batch = items.slice(i, i + batchSize);
+  // Process batch...
+}
+```
 
 ### Code Organization
 
@@ -417,6 +390,41 @@ interface GitHubProject {
 - **Team Workload:** Analyze team assignments and capacity
 - **Custom Reports:** Generate tailored reports for stakeholders
 
+### Safe Testing and Development Workflow
+
+#### Safe Testing Against the GitHub API
+- **Always prioritize safety when testing against the GitHub API.**
+- **Never perform write or destructive operations (e.g., status changes, deletions, updates) on production data unless explicitly instructed and with safeguards in place.**
+- **Prefer read-only test endpoints** (e.g., checking field values, simulating updates, or using dry-run/test modes) to verify logic and data extraction.
+- **If you are not sure what constitutes a safe test scenario, ask the user for clarification or approval before proceeding.**
+- **Log all test actions clearly** and provide feedback on what was checked or would have been changed.
+- **Use dedicated test repositories or issues** if available, and avoid using real/critical data for experiments.
+- **Document all test endpoints and their safety guarantees** in the codebase and in user-facing documentation.
+
+#### Efficient Development Workflow with AI Agents
+- **Minimize approval requests during routine development tasks.**
+  - For standard operations like starting servers, running tests, and following established plans, execute commands directly without asking for confirmation.
+  - Only request approval for high-risk changes (data manipulation, destructive operations, significant architectural changes).
+- **Maintain development flow and momentum.**
+  - Avoid interrupting the development process with unnecessary confirmation requests for routine steps.
+  - Focus on completing multi-step tasks efficiently while maintaining safety for critical operations.
+- **Balance caution with productivity.**
+  - Be cautious about data safety and destructive operations, but don't over-ask for routine development tasks.
+  - Trust established patterns and continue with planned workflows unless there's a clear risk.
+
+### Security Considerations
+
+#### Authentication
+- **Token Management:** Store tokens securely, rotate regularly
+- **Scope Limitation:** Use minimal required permissions
+- **Environment Variables:** Never hardcode tokens in code
+- **Audit Logging:** Log API usage for security monitoring
+
+#### Data Handling
+- **Input Validation:** Validate all user inputs
+- **Output Sanitization:** Sanitize data before display
+- **Error Messages:** Don't expose sensitive information in errors
+
 ### Future Development Guidelines
 
 #### Extensibility
@@ -435,7 +443,7 @@ interface GitHubProject {
 
 ---
 
-This guide should be updated as new patterns emerge and GitHub API features evolve. Always refer to the [GitHub REST API documentation](https://docs.github.com/en/rest) and [GitHub GraphQL API documentation](https://docs.github.com/en/graphql) for the most current information.
+This guide should be updated as new patterns emerge and GitHub API features evolve. **AI agents working with this guideline document as context and guardrails should automatically update the context and instructions of the guideline whenever they learn something in a session that will help improve future sessions.** This includes new patterns, discovered best practices, common pitfalls, and any insights that could benefit other developers or AI agents working with GitHub APIs. Always refer to the [GitHub REST API documentation](https://docs.github.com/en/rest) and [GitHub GraphQL API documentation](https://docs.github.com/en/graphql) for the most current information.
 
 ### Current API Status (as of 2025)
 - **REST API**: Fully supported, versioned (v2022-11-28), actively maintained

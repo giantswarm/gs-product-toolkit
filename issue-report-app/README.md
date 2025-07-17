@@ -13,6 +13,29 @@ A TypeScript application for generating comprehensive issue reports from GitHub 
 - 🔐 Secure token-based authentication
 - 📝 Comprehensive TypeScript types
 
+## New Feature: Status Update Functionality
+
+### Overview
+The app now includes the ability to automatically update the Status field of all issues listed in a generated report. This feature follows the GitHub API development guidelines and uses GraphQL mutations to update ProjectV2 field values.
+
+### How It Works
+1. **Generate a Report**: Create a report for a specific team and status
+2. **Select New Status**: Choose the desired new status from the dropdown
+3. **Update All Issues**: Click "Update All Issues Status" to automatically update all issues in the report
+4. **Review Results**: See detailed feedback on which issues were successfully updated
+
+### Technical Implementation
+- **GraphQL Mutations**: Uses `updateProjectV2ItemFieldValue` mutation
+- **Rate Limiting**: Respects GitHub API rate limits with built-in delays
+- **Error Handling**: Comprehensive error reporting for failed updates
+- **Batch Processing**: Processes multiple issues efficiently
+- **Schema Discovery**: Dynamically discovers field configurations
+
+### API Endpoints
+- `POST /api/update-report-status`: Updates status for all issues in a report
+  - Body: `{ report: string, newStatus: string }`
+  - Response: `{ success: boolean, updated: number, failed: number, totalIssues: number, errors: Array, message: string }`
+
 ## Prerequisites
 
 - Node.js 16+ 
@@ -118,6 +141,7 @@ Each report includes a concise summary with:
 - `GET /api/health` - Health check endpoint
 - `GET /api/roadmap-options` - Get available teams and statuses
 - `POST /api/generate-report` - Generate issue report
+- `POST /api/update-report-status` - Update report status
 
 ### Example API Usage
 
@@ -129,6 +153,11 @@ curl http://localhost:3001/api/roadmap-options
 curl -X POST http://localhost:3001/api/generate-report \
   -H "Content-Type: application/json" \
   -d '{"team":"Atlas 🗺️","status":"In Progress ⛏️"}'
+
+# Update report status
+curl -X POST http://localhost:3001/api/update-report-status \
+  -H "Content-Type: application/json" \
+  -d '{"report":"# Team Atlas Issue Report...","newStatus":"Done ✅"}'
 ```
 
 ## Project Structure

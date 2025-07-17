@@ -7,6 +7,7 @@ interface ReportIssue {
   repository: string;
   kind?: string;
   state: string;
+  projectItemId?: string;
   parentIssue?: {
     number: number;
     title: string;
@@ -23,6 +24,7 @@ interface ReportData {
 
 export class IssueReportGenerator {
   private githubService: GitHubAPIService;
+  private lastReportData: Array<{ issueNumber: number; repository: string; projectItemId: string; kind?: string }> = [];
 
   constructor() {
     this.githubService = new GitHubAPIService();
@@ -46,6 +48,31 @@ export class IssueReportGenerator {
 
       // Group issues by Kind
       const reportData = this.groupIssuesByKind(allIssues);
+
+      // Store the report data for status updates (excluding Epic issues)
+      this.lastReportData = [];
+      for (const issue of allIssues) {
+        // Skip Epic issues - they should not be moved
+        if (issue.kind === 'Epic 🎯') {
+          continue;
+        }
+        
+        if (issue.projectItemId) {
+          const reportData: { issueNumber: number; repository: string; projectItemId: string; kind?: string } = {
+            issueNumber: issue.issue.number,
+            repository: this.extractRepoNameFromUrl(issue.issue.url),
+            projectItemId: issue.projectItemId
+          };
+          
+          if (issue.kind) {
+            reportData.kind = issue.kind;
+          }
+          
+          this.lastReportData.push(reportData);
+        }
+      }
+
+      console.log(`💾 Stored ${this.lastReportData.length} issues for status updates (excluding Epic issues)`);
 
       // Generate the report markdown
       const report = this.createReportMarkdown(reportData, year, month);
@@ -88,6 +115,7 @@ export class IssueReportGenerator {
         repository: this.extractRepoNameFromUrl(issue.issue.url),
         kind: issue.kind,
         state: issue.issue.state,
+        projectItemId: issue.projectItemId,
         parentIssue: issue.parentIssue
       };
 
@@ -157,6 +185,12 @@ export class IssueReportGenerator {
    */
   private createTLDR(data: ReportData): string {
     let tldr = '**TL;DR**\n';
+
+    // Check if there are any issues at all
+    const totalIssues = data.roadmap.length + data.customerWork.length + data.operationalWork.length + data.otherIssues.length;
+    if (totalIssues === 0) {
+      return tldr + 'There are currently no issues in this team and status.\n';
+    }
 
     // Roadmap summary with actual parent issue titles
     if (data.roadmap.length > 0) {
@@ -255,7 +289,7 @@ export class IssueReportGenerator {
   /**
    * Create a section with grouped issues
    */
-  private createSection(sectionName: string, issues: ReportIssue[]): string {
+  private createSection(sectionName: string, issues: ReportIssue[], status?: string): string {
     let section = `**${sectionName}**\n`;
 
     // Group issues by parent
@@ -263,24 +297,21 @@ export class IssueReportGenerator {
 
     for (const [parentTitle, childIssues] of Object.entries(parentGroups)) {
       if (parentTitle === 'No Parent') {
-        // Issues without parents
+        // Individual issues without parent - format as "title - repo#number" (link only on repo#number, no brackets around the whole thing)
         for (const issue of childIssues) {
-          const repo = this.extractRepoNameFromUrl(issue.url);
-          section += `- ${issue.title} - [${repo}#${issue.number}](${issue.url})\n`;
+          section += `- ${issue.title} - [${issue.repository}#${issue.number}](${issue.url})\n`;
         }
       } else {
-        // Issues with parents - show parent first, then children
+        // Issues with parent - show parent with tense-based verb, children with "title - repo#number" format (link only on repo#number)
         const parentIssue = childIssues[0]?.parentIssue;
-        if (parentIssue) {
-          const parentRepo = this.extractRepoNameFromUrl(parentIssue.url);
+        if (parentIssue && parentIssue.url) {
           const isCompleted = this.isParentCompleted(childIssues);
           const statusText = isCompleted ? 'We finished with' : 'We made progress on';
-          
-          section += `- ${statusText} ${parentIssue.title} ([${parentRepo}#${parentIssue.number}](${parentIssue.url})) by\n`;
+          const byText = this.getByTextForStatus(status);
+          section += `- ${statusText} ${parentIssue.title} ([${this.extractRepoNameFromUrl(parentIssue.url)}#${parentIssue.number}](${parentIssue.url})) ${byText}\n`;
           
           for (const issue of childIssues) {
-            const repo = this.extractRepoNameFromUrl(issue.url);
-            section += `  - ${issue.title} - [${repo}#${issue.number}](${issue.url})\n`;
+            section += `  - ${issue.title} - [${issue.repository}#${issue.number}](${issue.url})\n`;
           }
         }
       }
@@ -341,6 +372,30 @@ export class IssueReportGenerator {
   }
 
   /**
+   * Get appropriate "by" text based on the status
+   */
+  private getByTextForStatus(status?: string): string {
+    if (!status) {
+      return 'by';
+    }
+    
+    const normalized = status.toLowerCase();
+    
+    // Check for validation/done statuses
+    if (normalized.includes('validation') || normalized.includes('done')) {
+      return 'by delivering';
+    } 
+    // Check for in progress statuses
+    else if (normalized.includes('in progress') || normalized.includes('progress')) {
+      return 'by working on';
+    } 
+    // All other statuses (planning, review, etc.)
+    else {
+      return 'by looking at';
+    }
+  }
+
+  /**
    * Generate an issue report for a given team and status
    */
   async generateReportForTeamStatus(team: string, status: string): Promise<string> {
@@ -348,6 +403,30 @@ export class IssueReportGenerator {
     try {
       const allIssues = await this.githubService.searchRoadmapIssues(team, status, undefined);
       console.log(`📋 Found ${allIssues.length} issues with Team "${team}" and Status "${status}"`);
+      
+      // Store the project item IDs for later use in status updates (excluding Epic issues)
+      this.lastReportData = [];
+      for (const issue of allIssues) {
+        // Skip Epic issues - they should not be moved
+        if (issue.kind === 'Epic 🎯') {
+          continue;
+        }
+        
+        if (issue.projectItemId) {
+          const data: { issueNumber: number; repository: string; projectItemId: string; kind?: string } = {
+            issueNumber: issue.issue.number,
+            repository: this.extractRepoNameFromUrl(issue.issue.url),
+            projectItemId: issue.projectItemId
+          };
+          if (issue.kind) {
+            data.kind = issue.kind;
+          }
+          this.lastReportData.push(data);
+        }
+      }
+      
+      console.log(`💾 Stored ${this.lastReportData.length} issues for status updates (excluding Epic issues)`);
+      
       const reportData = this.groupIssuesByKind(allIssues);
       const report = this.createReportMarkdownForTeamStatus(reportData, team, status);
       return report;
@@ -478,6 +557,13 @@ export class IssueReportGenerator {
   private createTLDRWithTense(data: ReportData, status: string): string {
     const tense = this.getTenseInfo(status);
     let tldr = '**TL;DR**\n';
+    
+    // Check if there are any issues at all
+    const totalIssues = data.roadmap.length + data.customerWork.length + data.operationalWork.length + data.otherIssues.length;
+    if (totalIssues === 0) {
+      return tldr + 'There are currently no issues in this team and status.\n';
+    }
+    
     // Roadmap summary with actual parent issue titles
     if (data.roadmap.length > 0) {
       const parentGroups = this.groupByParent(data.roadmap);
@@ -561,33 +647,210 @@ export class IssueReportGenerator {
     return tldr;
   }
 
+  /**
+   * Get appropriate verb for a section based on status
+   */
+  private getVerbForSection(sectionName: string, status: string): string {
+    switch (sectionName) {
+      case 'Roadmap':
+        return this.getRoadmapVerb(status);
+      case 'Customer Work':
+        return this.getCustomerWorkVerb(status);
+      case 'Operational Work':
+        return this.getOperationalWorkVerb(status);
+      default:
+        return this.getOtherIssuesVerb(status);
+    }
+  }
+
+  /**
+   * Get appropriate verb for roadmap section based on status
+   */
+  private getRoadmapVerb(status: string): string {
+    switch (status) {
+      case 'Done ✅':
+        return 'Completed';
+      case 'In Progress 🔄':
+        return 'Made progress on';
+      case 'Validation ☑️':
+        return 'Validated';
+      case 'Review 🔍':
+        return 'Reviewed';
+      case 'Planning 📋':
+        return 'Planned';
+      default:
+        return 'Worked on';
+    }
+  }
+
+  /**
+   * Create a section with appropriate tense based on status
+   */
   private createSectionWithTense(sectionName: string, issues: ReportIssue[], status: string): string {
-    const tense = this.getTenseInfo(status);
+    if (issues.length === 0) return '';
+
     let section = `**${sectionName}**\n`;
+    
+    // Group by parent issue
     const parentGroups = this.groupByParent(issues);
+    
     for (const [parentTitle, childIssues] of Object.entries(parentGroups)) {
       if (parentTitle === 'No Parent') {
+        // Individual issues without parent - format as "title - repo#number" (link only on repo#number, no brackets around the whole thing)
         for (const issue of childIssues) {
-          const repo = this.extractRepoNameFromUrl(issue.url);
-          section += `- ${issue.title} - [${repo}#${issue.number}](${issue.url})\n`;
+          section += `- ${issue.title} - [${issue.repository}#${issue.number}](${issue.url})\n`;
         }
       } else {
+        // Issues with parent - show parent with tense-based verb, children with "title - repo#number" format (link only on repo#number)
         const parentIssue = childIssues[0]?.parentIssue;
-        if (parentIssue) {
-          const parentRepo = this.extractRepoNameFromUrl(parentIssue.url);
-          let statusText = tense.sectionCompleted;
-          if (!this.isParentCompleted(childIssues)) {
-            statusText = tense.sectionProgress;
-          }
-          section += `- ${parentIssue.title} ([${parentRepo}#${parentIssue.number}](${parentIssue.url})) ${statusText} by\n`;
+        if (parentIssue && parentIssue.url) {
+          const tense = this.getTenseInfo(status);
+          const isCompleted = this.isParentCompleted(childIssues);
+          const parentVerb = isCompleted ? tense.tldrCompleted : tense.tldrProgress;
+          
+          const byText = this.getByTextForStatus(status);
+          section += `- ${parentVerb} ${parentIssue.title} ([${this.extractRepoNameFromUrl(parentIssue.url)}#${parentIssue.number}](${parentIssue.url})) ${byText}\n`;
+          
           for (const issue of childIssues) {
-            const repo = this.extractRepoNameFromUrl(issue.url);
-            section += `  - ${issue.title} - [${repo}#${issue.number}](${issue.url})\n`;
+            section += `  - ${issue.title} - [${issue.repository}#${issue.number}](${issue.url})\n`;
           }
         }
       }
     }
-    section += '\n';
-    return section;
+    
+    return section + '\n';
+  }
+
+  /**
+   * Extract issue numbers, repositories, and project item IDs from a generated report
+   */
+  extractIssuesFromReport(report: string): Array<{ issueNumber: number; repository: string; projectItemId?: string }> {
+    const issues: Array<{ issueNumber: number; repository: string; projectItemId?: string }> = [];
+    
+    // Match patterns like [repo#123](url) or giantswarm#123
+    const issuePatterns = [
+      /\[([^#]+)#(\d+)\]\([^)]+\)/g,  // [repo#123](url) format
+      /giantswarm#(\d+)/g,           // giantswarm#123 format
+      /roadmap#(\d+)/g               // roadmap#123 format
+    ];
+    
+    for (const pattern of issuePatterns) {
+      let match;
+      while ((match = pattern.exec(report)) !== null) {
+        if (pattern.source.includes('giantswarm#') || pattern.source.includes('roadmap#')) {
+          // For giantswarm#123 or roadmap#123 patterns
+          const issueNumberStr = match[1];
+          if (issueNumberStr) {
+            const issueNumber = parseInt(issueNumberStr, 10);
+            const repository = pattern.source.includes('giantswarm#') ? 'giantswarm' : 'roadmap';
+            if (!isNaN(issueNumber) && !issues.some(i => i.issueNumber === issueNumber && i.repository === repository)) {
+              issues.push({ issueNumber, repository });
+            }
+          }
+        } else {
+          // For [repo#123](url) pattern
+          const repository = match[1];
+          const issueNumberStr = match[2];
+          if (repository && issueNumberStr) {
+            const issueNumber = parseInt(issueNumberStr, 10);
+            if (!isNaN(issueNumber) && !issues.some(i => i.issueNumber === issueNumber && i.repository === repository)) {
+              issues.push({ issueNumber, repository });
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`DEBUG: Extracted ${issues.length} unique issues from report:`, issues);
+    return issues.sort((a, b) => a.issueNumber - b.issueNumber);
+  }
+
+  /**
+   * Extract issue numbers from a generated report (backward compatibility)
+   */
+  extractIssueNumbersFromReport(report: string): number[] {
+    const issues = this.extractIssuesFromReport(report);
+    return issues.map(issue => issue.issueNumber);
+  }
+
+  /**
+   * Update status for all issues in a report
+   */
+  async updateReportIssuesStatus(report: string, newStatus: string): Promise<{
+    success: boolean;
+    updated: number;
+    failed: number;
+    errors: Array<{ issueNumber: number; error: string }>;
+    totalIssues: number;
+  }> {
+    try {
+      console.log(`🔄 Updating status to "${newStatus}" for issues in report...`);
+      
+      // Extract issue numbers and repositories from the report
+      const issues = this.extractIssuesFromReport(report);
+      
+      if (issues.length === 0) {
+        return {
+          success: false,
+          updated: 0,
+          failed: 0,
+          errors: [],
+          totalIssues: 0
+        };
+      }
+      
+      console.log(`📋 Found ${issues.length} issues to update:`, issues);
+      
+      // Update the status using the GitHub API service with repository information
+      const result = await this.githubService.updateIssuesStatusWithRepos(issues, newStatus);
+      
+      return {
+        ...result,
+        totalIssues: issues.length
+      };
+      
+    } catch (error) {
+      console.error('❌ Error updating report issues status:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update status for all issues in the last generated report using stored project item IDs
+   */
+  async updateLastReportIssuesStatus(newStatus: string): Promise<{
+    success: boolean;
+    updated: number;
+    failed: number;
+    errors: Array<{ issueNumber: number; error: string }>;
+    totalIssues: number;
+  }> {
+    try {
+      console.log(`🔄 Updating status to "${newStatus}" for issues in last report...`);
+      
+      if (this.lastReportData.length === 0) {
+        return {
+          success: false,
+          updated: 0,
+          failed: 0,
+          errors: [{ issueNumber: 0, error: 'No report data available. Please generate a report first.' }],
+          totalIssues: 0
+        };
+      }
+      
+      console.log(`📋 Found ${this.lastReportData.length} issues to update from last report`);
+      
+      // Update the status using the GitHub API service with stored project item IDs
+      const result = await this.githubService.updateIssuesStatusWithProjectItemIds(this.lastReportData, newStatus);
+      
+      return {
+        ...result,
+        totalIssues: this.lastReportData.length
+      };
+      
+    } catch (error) {
+      console.error('❌ Error updating last report issues status:', error);
+      throw error;
+    }
   }
 } 
